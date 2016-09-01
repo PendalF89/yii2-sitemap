@@ -65,11 +65,12 @@ class Sitemap extends Component
 		}
 
 		foreach ($urls as $url) {
-			// Если урл уже в базе, то обновляем его...
-			if ($this->findUrl($url['loc'])) {
-				$this->updateUrl($url['loc'], $url['lastmod']);
-			} else { // ... иначе, добавляем новый урл в базу
-				$this->insertUrl($url['loc'], $sitemap->getName(), $url['lastmod']);
+			$lastmod = isset($url['lastmod']) ? $url['lastmod'] : null;
+			// Если урла нет в базе, то добавляем его...
+			if (!$this->findUrl($url['loc'])) {
+				$this->insertUrl($url['loc'], $sitemap->getName(), $lastmod);
+			} elseif ($lastmod) { // ... иначе, если есть $lastmod, то обновляем его.
+				$this->updateUrl($url['loc'], $lastmod);
 			}
 		}
 
@@ -97,7 +98,7 @@ class Sitemap extends Component
 	public function updateUrl($loc, $lastmod)
 	{
 		return $this->getDb()->createCommand(
-			'UPDATE sitemap SET lastmod = :lastmod WHERE loc = :loc AND lastmod < :lastmod', [
+			'UPDATE sitemap SET lastmod = :lastmod WHERE loc = :loc AND (lastmod < :lastmod OR ISNULL(lastmod))', [
 			'loc'     => $loc,
 			'lastmod' => $lastmod,
 		])->execute();
@@ -125,7 +126,7 @@ class Sitemap extends Component
 	 * @return int
 	 * @throws \yii\db\Exception
 	 */
-	protected function insertUrl($loc, $sitemap, $lastmod)
+	protected function insertUrl($loc, $sitemap, $lastmod = null)
 	{
 		return $this->getDb()->createCommand('INSERT INTO sitemap VALUES (:loc, :sitemap, :lastmod)', [
 			'loc'     => $loc,
