@@ -35,8 +35,18 @@ class Sitemap extends Component
 	 */
 	public function updateAll()
 	{
+		/** @var SitemapInterface $sitemap */
+		$actualSitemaps = [];
 		foreach ($this->sitemaps as $sitemapClass) {
-			$this->updateSitemap(new $sitemapClass);
+			$sitemap = new $sitemapClass;
+			if ($this->updateSitemap($sitemap)) {
+				$actualSitemaps[] = $sitemap->getName();
+			}
+		}
+
+		$nonActualSitemaps = array_diff($this->findSitemaps(), $actualSitemaps);
+		foreach ($nonActualSitemaps as $sitemap) {
+			$this->deleteSitemap($sitemap);
 		}
 	}
 
@@ -64,8 +74,8 @@ class Sitemap extends Component
 		}
 
 		$nonActualUrls = array_diff(
-			ArrayHelper::getColumn($urls, 'loc'),
-			ArrayHelper::getColumn($this->findUrls($sitemap->getName()), 'loc')
+			ArrayHelper::getColumn($this->findUrls($sitemap->getName()), 'loc'),
+			ArrayHelper::getColumn($urls, 'loc')
 		);
 
 		foreach ($nonActualUrls as $url) {
@@ -149,6 +159,31 @@ class Sitemap extends Component
 		return $this->getDb()->createCommand('SELECT * FROM sitemap WHERE sitemap = :sitemap', [
 			'sitemap' => $sitemap,
 		])->queryAll();
+	}
+
+	/**
+	 * Ищет все карты сайта
+	 *
+	 * @return array
+	 */
+	protected function findSitemaps()
+	{
+		return $this->getDb()->createCommand('SELECT sitemap FROM sitemap GROUP BY sitemap')->queryColumn();
+	}
+
+	/**
+	 * Удаляет все урлы карты сайта $sitemap из базы
+	 *
+	 * @param string $sitemap название карты сайта
+	 *
+	 * @return int
+	 * @throws \yii\db\Exception
+	 */
+	protected function deleteSitemap($sitemap)
+	{
+		return $this->getDb()->createCommand('DELETE FROM sitemap WHERE sitemap = :sitemap', [
+			'sitemap' => $sitemap,
+		])->execute();
 	}
 
 	/**
