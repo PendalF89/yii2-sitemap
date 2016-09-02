@@ -81,4 +81,8 @@ So, when you create sitemap classes, you can use component for create sitemap fi
 Yii::$app->sitemap->update();
 ```
 
-This command update sitemap info in DB and create xml-files.
+Also, you can update one url in DB:
+
+```php
+Yii::$app->sitemap->updateUrl('/any-url-width-date/', '2016-09-02 12:23:17');
+```
