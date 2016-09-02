@@ -20,45 +20,87 @@ class Sitemap extends Component
 	public $sitemaps = [];
 
 	/**
-	 * @var array опции генератора карты сайта
+	 * @var SitemapGenerator|array массив опций класса SitemapGenerator. После инициализцаии становится объектом.
 	 */
-	public $generatorOptions = [];
+	public $generator;
 
 	/**
-	 * @var string id компонента для работы с БД
+	 * @var SitemapModel|array массив опций класса SitemapModel. После инициализцаии становится объектом.
 	 */
-	public $db = 'db';
+	public $model = ['class' => 'pendalf89\sitemap\SitemapModel'];
 
 	/**
-	 * Последовательно запускает метод updateSitemap() для обновления всех карт сайта.
-	 * Список карт сайта находится в поле $this->sitemaps.
+	 * @inheritdoc
 	 */
-	public function updateAll()
+	public function init()
+	{
+		$this->model     = Yii::createObject($this->model);
+		$this->generator = Yii::createObject($this->generator);
+	}
+
+	/**
+	 * Обновляет информацию о карте сайта в БД и создаёт файлы карты сайта.
+	 */
+	public function update()
+	{
+		$this->updateSitemapsInfo();
+		$this->createFiles();
+	}
+
+	/**
+	 * @inheritdoc
+	 */
+	public function updateUrl($loc, $lastmod)
+	{
+		return $this->model->updateUrl($loc, $lastmod);
+	}
+
+	/**
+	 * Создаёт файлы карты сайта
+	 */
+	protected function createFiles()
+	{
+		/** @var SitemapInterface $sitemap */
+		foreach ($this->sitemaps as $sitemapClass) {
+			$sitemap = new $sitemapClass;
+			if ($urls = $this->model->findUrls($sitemap->getName())) {
+				$this->generator->createSitemap($sitemap->getName(), $urls);
+			}
+		}
+		$this->generator->createIndexSitemap();
+	}
+
+	/**
+	 * Последовательно запускает метод updateSitemap() для обновления информации о всех карт сайта.
+	 * Список классов карт сайта находится в поле $this->sitemaps.
+	 * После обновления, из БД удаляются неактуальные карты сайта.
+	 */
+	protected function updateSitemapsInfo()
 	{
 		/** @var SitemapInterface $sitemap */
 		$actualSitemaps = [];
 		foreach ($this->sitemaps as $sitemapClass) {
 			$sitemap = new $sitemapClass;
-			if ($this->updateSitemap($sitemap)) {
+			if ($this->updateSitemapInfo($sitemap)) {
 				$actualSitemaps[] = $sitemap->getName();
 			}
 		}
 
-		$nonActualSitemaps = array_diff($this->findSitemaps(), $actualSitemaps);
+		$nonActualSitemaps = array_diff($this->model->findSitemaps(), $actualSitemaps);
 		foreach ($nonActualSitemaps as $sitemap) {
-			$this->deleteSitemap($sitemap);
+			$this->model->deleteSitemap($sitemap);
 		}
 	}
 
 	/**
-	 * Обновляет информацию в базе о карте сайта.
+	 * Обновляет информацию о карте сайта в БД.
 	 * Обратите внимание, что этот метод обновляет только информацию в БД, а не физический xml-файл.
 	 *
 	 * @param SitemapInterface $sitemap
 	 *
 	 * @return bool
 	 */
-	public function updateSitemap(SitemapInterface $sitemap)
+	protected function updateSitemapInfo(SitemapInterface $sitemap)
 	{
 		if (!$urls = $sitemap->getUrls()) {
 			return false;
@@ -67,133 +109,22 @@ class Sitemap extends Component
 		foreach ($urls as $url) {
 			$lastmod = isset($url['lastmod']) ? $url['lastmod'] : null;
 			// Если урла нет в базе, то добавляем его...
-			if (!$this->findUrl($url['loc'])) {
-				$this->insertUrl($url['loc'], $sitemap->getName(), $lastmod);
+			if (!$this->model->findUrl($url['loc'])) {
+				$this->model->insertUrl($url['loc'], $sitemap->getName(), $lastmod);
 			} elseif ($lastmod) { // ... иначе, если есть $lastmod, то обновляем его.
 				$this->updateUrl($url['loc'], $lastmod);
 			}
 		}
 
 		$nonActualUrls = array_diff(
-			ArrayHelper::getColumn($this->findUrls($sitemap->getName()), 'loc'),
+			ArrayHelper::getColumn($this->model->findUrls($sitemap->getName()), 'loc'),
 			ArrayHelper::getColumn($urls, 'loc')
 		);
 
 		foreach ($nonActualUrls as $url) {
-			$this->deleteUrl($url);
+			$this->model->deleteUrl($url);
 		}
 
 		return true;
-	}
-
-	/**
-	 * Обновляет дату последнего изменения урла, если переданная дата больше, чем существующая.
-	 *
-	 * @param string $loc URL
-	 * @param string $lastmod дата в формате "Y-m-d H:i:s"
-	 *
-	 * @return int
-	 * @throws \yii\db\Exception
-	 */
-	public function updateUrl($loc, $lastmod)
-	{
-		return $this->getDb()->createCommand(
-			'UPDATE sitemap SET lastmod = :lastmod WHERE loc = :loc AND (lastmod < :lastmod OR ISNULL(lastmod))', [
-			'loc'     => $loc,
-			'lastmod' => $lastmod,
-		])->execute();
-	}
-
-	/**
-	 * Ищет запись в базе по URL (loc)
-	 *
-	 * @param string $loc URL
-	 *
-	 * @return array|false
-	 */
-	protected function findUrl($loc)
-	{
-		return $this->getDb()->createCommand('SELECT * FROM sitemap WHERE loc = :loc', ['loc' => $loc])->queryOne();
-	}
-
-	/**
-	 * Добавляет новый URL в базу
-	 *
-	 * @param string $loc URL
-	 * @param string $sitemap название карты сайта
-	 * @param string $lastmod дата в формате "Y-m-d H:i:s"
-	 *
-	 * @return int
-	 * @throws \yii\db\Exception
-	 */
-	protected function insertUrl($loc, $sitemap, $lastmod = null)
-	{
-		return $this->getDb()->createCommand('INSERT INTO sitemap VALUES (:loc, :sitemap, :lastmod)', [
-			'loc'     => $loc,
-			'sitemap' => $sitemap,
-			'lastmod' => $lastmod,
-		])->execute();
-	}
-
-	/**
-	 * Удаляет URL из базы
-	 *
-	 * @param string $loc URL
-	 *
-	 * @return int
-	 * @throws \yii\db\Exception
-	 */
-	protected function deleteUrl($loc)
-	{
-		return $this->getDb()->createCommand('DELETE FROM sitemap WHERE loc = :loc', ['loc' => $loc])->execute();
-	}
-
-	/**
-	 * Ищет все URL карты сайта
-	 *
-	 * @param string $sitemap название карты сайта
-	 *
-	 * @return array
-	 */
-	protected function findUrls($sitemap)
-	{
-		return $this->getDb()->createCommand('SELECT * FROM sitemap WHERE sitemap = :sitemap', [
-			'sitemap' => $sitemap,
-		])->queryAll();
-	}
-
-	/**
-	 * Ищет все карты сайта
-	 *
-	 * @return array
-	 */
-	protected function findSitemaps()
-	{
-		return $this->getDb()->createCommand('SELECT sitemap FROM sitemap GROUP BY sitemap')->queryColumn();
-	}
-
-	/**
-	 * Удаляет все урлы карты сайта $sitemap из базы
-	 *
-	 * @param string $sitemap название карты сайта
-	 *
-	 * @return int
-	 * @throws \yii\db\Exception
-	 */
-	protected function deleteSitemap($sitemap)
-	{
-		return $this->getDb()->createCommand('DELETE FROM sitemap WHERE sitemap = :sitemap', [
-			'sitemap' => $sitemap,
-		])->execute();
-	}
-
-	/**
-	 * Возвращает компонент для работы с БД
-	 *
-	 * @return mixed|\yii\db\Connection
-	 */
-	protected function getDb()
-	{
-		return Yii::$app->{$this->db};
 	}
 }

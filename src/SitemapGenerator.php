@@ -6,36 +6,22 @@ use Yii;
 use yii\base\Component;
 
 /**
- * Class SitemapGenerator
+ * Class Sitemap
  * Класс предназначен для создания карты сайта
- *
- * Пример использования:
- * ```
- *  use pendalf89/sitemap/SitemapGenerator;
- *
- *	Yii::$app->urlManager->baseUrl = 'http://site.com'; // base url use in sitemap urls creation
- *	
- *	$sitemap = new ArticlesSitemap(); // must implement a SitemapInterface
- *	$sitemapGenerator = new SitemapGenerator([
- *	 	'sitemaps' => [$sitemap],
- *	 	'dir' => '@webRoot',
- *	]);
- *	$sitemapGenerator->generate();
- * ```
  *
  * @package common\components
  */
 class SitemapGenerator extends Component
 {
 	/**
-	 * @var string директория для записи файлов карты сайта. Допускается использование алиасов.
+	 * @var string путь для записи файлов карты сайта. Допускается использование алиасов.
 	 */
-	public $dir = '';
+	public $path = '';
 
 	/**
-	 * @var string название индексного файла карты сайта
+	 * @var string базовый url (адрес сайта с протоколом, например: http://www.site.com)
 	 */
-	public $indexFilename = 'sitemap.xml';
+	public $baseUrl = '';
 
 	/**
 	 * @var string формат записи последнего изменеия страницы
@@ -43,9 +29,9 @@ class SitemapGenerator extends Component
 	public $lastmodFormat = 'Y-m-d';
 
 	/**
-	 * @var SitemapInterface[] набор объектов карты сайта
+	 * @var string название индексного файла карты сайта
 	 */
-	public $sitemaps = [];
+	public $indexFilename = 'sitemap.xml';
 
 	/**
 	 * @var int максимальное количество адресов в одной карте.
@@ -63,102 +49,82 @@ class SitemapGenerator extends Component
 	protected $createdSitemaps = [];
 
 	/**
-	 * Создаёт карты сайта
-	 */
-	public function generate()
-	{
-		foreach ($this->sitemaps as $sitemap) {
-			$this->createSitemap($sitemap);
-		}
-		$this->createIndexSitemap();
-	}
-
-	/**
 	 * Создаёт индексную карту сайта
 	 *
-	 * @return string
+	 * @return bool
 	 */
-	protected function createIndexSitemap()
+	public function createIndexSitemap()
 	{
-		$sitemapIndex = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL;
-		$sitemapIndex .= '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . PHP_EOL;
-		$baseUrl = Yii::$app->urlManager->baseUrl;
+		self::sortByLastmod($this->createdSitemaps);
 
-		$sitemaps = $this->createdSitemaps;
-		self::sortByLastmod($sitemaps);
-
-		foreach ($sitemaps as $sitemap) {
-			$sitemapIndex .= '    <sitemap>' . PHP_EOL;
-			$sitemapIndex .= "        <loc>$baseUrl/$sitemap[loc]</loc>" . PHP_EOL;
-
-			if (!empty($sitemap['lastmodTimestamp'])) {
-				$lastmod = date($this->lastmodFormat, $sitemap['lastmodTimestamp']);
-				$sitemapIndex .= "        <lastmod>$lastmod</lastmod>" . PHP_EOL;
+		$sitemapIndex =
+			'<?xml version="1.0" encoding="UTF-8"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
+		foreach ($this->createdSitemaps as $sitemap) {
+			$sitemapIndex .= "<sitemap><loc>$this->baseUrl/$sitemap[loc]</loc>";
+			if (!empty($sitemap['lastmod'])) {
+				$lastmod = $this->formatLastmod($sitemap['lastmod']);
+				$sitemapIndex .= "<lastmod>$lastmod</lastmod>";
 			}
-
-			$sitemapIndex .= '    </sitemap>' . PHP_EOL;
+			$sitemapIndex .= '</sitemap>';
 		}
-
 		$sitemapIndex .= '</sitemapindex>';
-		$this->createSitemapFile($this->indexFilename, $sitemapIndex);
 
-		return $sitemapIndex;
+		return (bool) $this->createSitemapFile($this->indexFilename, $sitemapIndex);
 	}
 
 	/**
-	 * Создаёт карту сайта из объекта $sitemap и записывает информацию о созданной карте сайта
-	 * в массив $this->createdSitemaps
+	 * Создаёт файл/файлы карты сайта.
 	 *
-	 * @param SitemapInterface $sitemap
+	 * @param string $sitemap название карты сайта
+	 * @param array $urls массив урлов
 	 *
 	 * @return boolean
 	 */
-	protected function createSitemap(SitemapInterface $sitemap)
+	public function createSitemap($sitemap, $urls)
 	{
-		if (!$urls = $sitemap->getUrls()) {
-			return false;
-		}
-
-		self::sortByLastmod($urls);
 		$chunkUrls           = $this->chunkUrls($urls);
 		$multipleSitemapFlag = count($chunkUrls) > 1;
 		$i                   = 1;
 
 		foreach ($chunkUrls as $urlsData) {
-			$freshTimestamp = 0;
-			$urlset         = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL;
-			$urlset .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . PHP_EOL;
-
+			$urlset = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
 			foreach ($urlsData as $url) {
-				$urlset .= '    <url>' . PHP_EOL;
-				$urlset .= "        <loc>$url[url]</loc>" . PHP_EOL;
-
-				if (!empty($url['lastmodTimestamp'])) {
-					$date = date($this->lastmodFormat, $url['lastmodTimestamp']);
-					$urlset .= "        <lastmod>$date</lastmod>" . PHP_EOL;
-
-					if ($freshTimestamp < $url['lastmodTimestamp']) {
-						$freshTimestamp = $url['lastmodTimestamp'];
-					}
+				$loc = substr_count($url['loc'], '://') ? $url['loc'] : $this->baseUrl . $url['loc'];
+				$urlset .= "<url><loc>$loc</loc>";
+				if (!empty($url['lastmod'])) {
+					$lastmod = $this->formatLastmod($url['lastmod']);
+					$urlset .= "<lastmod>$lastmod</lastmod>";
 				}
-
-				$urlset .= '    </url>' . PHP_EOL;
+				$urlset .= '</url>';
 			}
-
 			$urlset .= '</urlset>';
-			$currentSitemapFilename = $multipleSitemapFlag ? "{$sitemap->getName()}-{$i}.xml" : "{$sitemap->getName()}.xml";
 
-			$this->createdSitemaps[] = [
-				'loc'              => $currentSitemapFilename,
-				'lastmodTimestamp' => $freshTimestamp,
-			];
+			$currentSitemapFilename = $multipleSitemapFlag ? "{$sitemap}-{$i}.xml" : "{$sitemap}.xml";
 			if (!$this->createSitemapFile($currentSitemapFilename, $urlset)) {
 				return false;
 			}
+
+			$this->createdSitemaps[] = [
+				'loc'              => $currentSitemapFilename,
+				'lastmod'          => !empty($urlsData[0]['lastmod']) ? $urlsData[0]['lastmod'] : null,
+				'lastmodTimestamp' => !empty($urlsData[0]['lastmod']) ? strtotime($urlsData[0]['lastmod']) : null,
+			];
 			$i++;
 		}
 
 		return true;
+	}
+
+	/**
+	 * Форматирует $lastmod в формат $this->lastmodFormat
+	 *
+	 * @param string $lastmod дата в формате "Y-m-d H:i:s"
+	 *
+	 * @return bool|string
+	 */
+	protected function formatLastmod($lastmod)
+	{
+		return date($this->lastmodFormat, strtotime($lastmod));
 	}
 
 	/**
@@ -171,13 +137,29 @@ class SitemapGenerator extends Component
 	 */
 	protected function chunkUrls(array $urls)
 	{
-		if (empty($this->maxUrlsCount)) {
+		if (!$this->maxUrlsCount) {
 			$result[] = $urls;
 
 			return $result;
 		}
 
 		return array_chunk($urls, $this->maxUrlsCount);
+	}
+
+	/**
+	 * Сортирует урлы по lastmodTimestamp в убывающем порядке
+	 *
+	 * @param array $items
+	 */
+	protected static function sortByLastmod(array &$items)
+	{
+		$lastmodTimestamps = [];
+
+		foreach ($items as $key => $row) {
+			$lastmodTimestamps[$key] = !empty($row['lastmodTimestamp']) ? $row['lastmodTimestamp'] : 0;
+		}
+
+		array_multisort($lastmodTimestamps, SORT_DESC, $items);
 	}
 
 	/**
@@ -190,24 +172,8 @@ class SitemapGenerator extends Component
 	 */
 	protected function createSitemapFile($filename, $data)
 	{
-		$fullFilename = Yii::getAlias($this->dir) . '/' . $filename;
+		$fullFilename = Yii::getAlias($this->path) . '/' . $filename;
 
 		return file_put_contents($fullFilename, $data);
-	}
-
-	/**
-	 * Сортирует урлы по lastmod в убывающем порядке
-	 *
-	 * @param array $urls
-	 */
-	protected static function sortByLastmod(array &$urls)
-	{
-		$lastmod = [];
-
-		foreach ($urls as $key => $row) {
-			$lastmod[$key] = !empty($row['lastmodTimestamp']) ? $row['lastmodTimestamp'] : 0;
-		}
-
-		array_multisort($lastmod, SORT_DESC, $urls);
 	}
 }
