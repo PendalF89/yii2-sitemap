@@ -21,7 +21,7 @@ to the require section of your `composer.json` file.
 
 Apply migration
 ```sh
-yii migrate --migrationPath=vendor/pendalf89/yii2-sitemap/migrations
+yii migrate --migrationPath=vendor/pendalf89/yii2-sitemap/src/migrations
 ```
 
 Configuration:
