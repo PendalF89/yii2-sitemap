@@ -3,7 +3,7 @@
 namespace pendalf89\sitemap;
 
 use Yii;
-use yii\base\Object;
+use yii\base\BaseObject;
 
 /**
  * Class SitemapModel
@@ -11,7 +11,7 @@ use yii\base\Object;
  *
  * @package common\components
  */
-class SitemapModel extends Object
+class SitemapModel extends BaseObject
 {
 	/**
 	 * @var string id компонента для работы с БД
